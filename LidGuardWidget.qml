@@ -12,8 +12,8 @@ PluginComponent {
     property bool unitActive: false
     property bool lidClosed: false
     property bool showInBar: pluginData.showInBar ?? true
-    // replicates BasePill.horizontalPadding so clicks cover the whole pill, not just the icon
-    readonly property real pillPadding: (root.barConfig?.removeWidgetPadding ?? false) ? 0 : (root.barConfig?.widgetPadding ?? 12) * (root.widgetThickness / 30)
+
+    pillClickAction: () => root.toggleLidguard()
 
     ccWidgetIcon: unitActive ? "bedtime_off" : "bedtime"
     ccWidgetPrimaryText: "Lid Guard"
@@ -29,11 +29,22 @@ PluginComponent {
 
     onCcWidgetToggled: root.toggleLidguard()
 
+    function monitorExited(proc, timer) {
+        if (Date.now() - proc.startedAt < 30000)
+            proc.restarts++
+        else
+            proc.restarts = 0
+        if (proc.restarts < 5)
+            timer.restart()
+        else
+            console.warn("[lidguard]", proc.command[0], "gave up after 5 failed restarts")
+    }
+
     horizontalBarPill: Component {
         Item {
-        visible: root.showInBar
-        implicitWidth: icon.width
-        implicitHeight: icon.height
+            visible: root.showInBar
+            implicitWidth: icon.width
+            implicitHeight: icon.height
 
             DankIcon {
                 id: icon
@@ -42,24 +53,15 @@ PluginComponent {
                 color: unitActive ? Theme.primary : Theme.surfaceText
                 opacity: unitActive ? 1.0 : 0.4
                 anchors.centerIn: parent
-            }
-
-            MouseArea {
-                width: parent.width + root.pillPadding * 2
-                height: root.barThickness
-                x: -root.pillPadding
-                y: -(height - parent.height) / 2
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.toggleLidguard()
             }
         }
     }
 
     verticalBarPill: Component {
         Item {
-        visible: root.showInBar
-        implicitWidth: icon.width
-        implicitHeight: icon.height
+            visible: root.showInBar
+            implicitWidth: icon.width
+            implicitHeight: icon.height
 
             DankIcon {
                 id: icon
@@ -68,15 +70,6 @@ PluginComponent {
                 color: unitActive ? Theme.primary : Theme.surfaceText
                 opacity: unitActive ? 1.0 : 0.4
                 anchors.centerIn: parent
-            }
-
-            MouseArea {
-                width: parent.width + root.pillPadding * 2
-                height: root.barThickness
-                x: -root.pillPadding
-                y: -(height - parent.height) / 2
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.toggleLidguard()
             }
         }
     }
@@ -161,8 +154,22 @@ PluginComponent {
                 }
             }
         }
-        Component.onCompleted: running = true
-        onExited: running = true // auto restart
+        property int restarts: 0
+        property real startedAt: 0
+        Component.onCompleted: {
+            startedAt = Date.now()
+            running = true
+        }
+        onExited: root.monitorExited(unitMonitor, unitRestart)
+    }
+
+    Timer {
+        id: unitRestart
+        interval: 3000
+        onTriggered: {
+            unitMonitor.startedAt = Date.now()
+            unitMonitor.running = true
+        }
     }
 
     // systemd-logind: kernel lid events (system bus)
@@ -191,7 +198,21 @@ PluginComponent {
                 }
             }
         }
-        Component.onCompleted: running = true
-        onExited: running = true // auto restart
+        property int restarts: 0
+        property real startedAt: 0
+        Component.onCompleted: {
+            startedAt = Date.now()
+            running = true
+        }
+        onExited: root.monitorExited(lidMonitor, lidRestart)
+    }
+
+    Timer {
+        id: lidRestart
+        interval: 3000
+        onTriggered: {
+            lidMonitor.startedAt = Date.now()
+            lidMonitor.running = true
+        }
     }
 }
