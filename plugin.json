@@ -1,13 +1,10 @@
 {
   "id": "lidguard",
   "name": "Lid Guard",
-  "capabilities": ["control-center", "dankbar-widget"],
-  "category": "system",
-  "repo": "https://github.com/d4hl/lidguard",
-  "author": "d4hl",
   "description": "Lid close = screen off instead of suspend. Toggle in control center.",
-  "dependencies": ["systemd", "logind", "dbus"],
-  "compositors": ["niri", "hyprland"],
-  "distro": ["any"],
-  "screenshot": "https://raw.githubusercontent.com/d4hl/lidguard/main/screenshot.png"
+  "version": "1.0.0",
+  "author": "dahl",
+  "icon": "bedtime",
+  "type": "widget",
+  "component": "./LidGuardWidget.qml"
 }
