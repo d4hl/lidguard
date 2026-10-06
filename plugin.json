@@ -1,10 +1,10 @@
 {
   "id": "lidguard",
   "name": "Lid Guard",
-  "description": "Lid close = screen off instead of suspend (toggle in control center)",
+  "description": "Lid close = screen off instead of suspend. Toggle in control center.",
   "version": "1.0.0",
   "author": "dahl",
-  "icon": "nightlight",
+  "icon": "bedtime",
   "type": "widget",
   "component": "./LidGuardWidget.qml"
 }

@@ -1,5 +1,3 @@
-// Lid Guard: lid close = screen off instead of suspend.
-// Source of truth: lidguard systemd unit (systemctl is-active), not local state.
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -12,88 +10,188 @@ PluginComponent {
     id: root
 
     property bool unitActive: false
-    property bool screensOff: false
-    property string prevLid: "" // "" until first poll
+    property bool lidClosed: false
+    property bool showInBar: pluginData.showInBar ?? true
+    // replicates BasePill.horizontalPadding so clicks cover the whole pill, not just the icon
+    readonly property real pillPadding: (root.barConfig?.removeWidgetPadding ?? false) ? 0 : (root.barConfig?.widgetPadding ?? 12) * (root.widgetThickness / 30)
 
-    ccWidgetIcon: unitActive ? "nightlight" : "nightlight_off"
+    ccWidgetIcon: unitActive ? "bedtime_off" : "bedtime"
     ccWidgetPrimaryText: "Lid Guard"
-    ccWidgetSecondaryText: unitActive ? "Close = screen off" : "Close = suspend"
+    ccWidgetSecondaryText: unitActive ? "close = screen off" : "close = suspend"
     ccWidgetIsActive: unitActive
 
-    onCcWidgetToggled: {
-        // ponytail: single command per toggle; truth comes from the unit, not from here
+    function toggleLidguard() {
         const cmd = unitActive
             ? ["systemctl", "--user", "stop", "lidguard.service"]
-            : ["systemd-run", "--user", "--unit=lidguard", "systemd-inhibit",
-               "--what=handle-lid-switch", "sleep", "infinity"]
+            : ["systemd-run", "--user", "--unit=lidguard", "systemd-inhibit", "--what=handle-lid-switch", "sleep", "infinity"]
         Quickshell.execDetached(cmd)
-        ToastService.showInfo(unitActive ? "Lid Guard off" : "Lid Guard on")
     }
 
+    onCcWidgetToggled: root.toggleLidguard()
+
     horizontalBarPill: Component {
-        Row {
-            spacing: Theme.spacingS
+        Item {
+        visible: root.showInBar
+        implicitWidth: icon.width
+        implicitHeight: icon.height
+
             DankIcon {
-                name: root.unitActive ? "nightlight" : "nightlight_off"
-                size: Theme.iconSize
-                color: root.unitActive ? Theme.primary : Theme.surfaceVariantText
-                anchors.verticalCenter: parent.verticalCenter
+                id: icon
+                name: unitActive ? "bedtime_off" : "bedtime"
+                size: Theme.barIconSize(root.barThickness, -4, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
+                color: unitActive ? Theme.primary : Theme.surfaceText
+                opacity: unitActive ? 1.0 : 0.4
+                anchors.centerIn: parent
             }
-            StyledText {
-                text: root.unitActive ? "screen off" : "suspend"
-                font.pixelSize: Theme.fontSizeMedium
-                color: Theme.surfaceText
-                anchors.verticalCenter: parent.verticalCenter
+
+            MouseArea {
+                width: parent.width + root.pillPadding * 2
+                height: root.barThickness
+                x: -root.pillPadding
+                y: -(height - parent.height) / 2
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.toggleLidguard()
             }
         }
     }
 
     verticalBarPill: Component {
-        DankIcon {
-            name: root.unitActive ? "nightlight" : "nightlight_off"
-            size: Theme.iconSize
-            color: root.unitActive ? Theme.primary : Theme.surfaceVariantText
-            anchors.horizontalCenter: parent.horizontalCenter
+        Item {
+        visible: root.showInBar
+        implicitWidth: icon.width
+        implicitHeight: icon.height
+
+            DankIcon {
+                id: icon
+                name: unitActive ? "bedtime_off" : "bedtime"
+                size: Theme.barIconSize(root.barThickness, -4, root.barConfig?.maximizeWidgetIcons, root.barConfig?.iconScale)
+                color: unitActive ? Theme.primary : Theme.surfaceText
+                opacity: unitActive ? 1.0 : 0.4
+                anchors.centerIn: parent
+            }
+
+            MouseArea {
+                width: parent.width + root.pillPadding * 2
+                height: root.barThickness
+                x: -root.pillPadding
+                y: -(height - parent.height) / 2
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.toggleLidguard()
+            }
         }
     }
 
-    function setScreens(off) {
-        screensOff = off
-        // dms dpms hangs forever if already in target state -> hard kill at 15s
-        Quickshell.execDetached(["timeout", "-s", "KILL", "15", "dms", "dpms", off ? "off" : "on"])
+    function applyState() {
+        if (!unitActive || !lidClosed) {
+            CompositorService.powerOnMonitors()
+        } else {
+            CompositorService.powerOffMonitors()
+        }
     }
 
-    function handleState(line) {
-        const parts = (line || "").split("|")
-        const closed = (parts[0] || "unknown") === "closed"
-        const active = (parts[1] || "inactive") === "active"
+    function setUnitActive(active) {
+        if (unitActive === active)
+            return
         unitActive = active
-        if (!active) {
-            if (screensOff)
-                setScreens(false) // guard killed while lid closed: wake screens back up
-        } else if (closed && !screensOff) {
-            setScreens(true)
-        } else if (!closed && screensOff) {
-            setScreens(false)
-        }
-        prevLid = closed ? "closed" : "open"
+        applyState()
     }
 
-    Timer {
-        interval: 1000
-        running: true
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: poll.running = true
+    function setLidClosed(closed) {
+        if (lidClosed === closed)
+            return
+        lidClosed = closed
+        applyState()
     }
 
+    Component.onCompleted: {
+        initialUnitState.running = true
+        initialLidState.running = true
+    } 
+
+    // one time process, unit state initialization
     Process {
-        id: poll
-        command: ["sh", "-c",
-            "lid=$(awk '{print $2}' /proc/acpi/button/lid/*/state 2>/dev/null | head -1); " +
-            "echo \"${lid:-unknown}|$(systemctl --user is-active lidguard.service)\""]
+        id: initialUnitState
+        command: ["systemctl", "--user", "is-active", "lidguard.service"]
         stdout: SplitParser {
-            onRead: line => root.handleState(line)
+            onRead: line => root.setUnitActive(line.trim() === "active")
         }
+    }
+
+    // one time process, lid state initialization
+    Process {
+        id: initialLidState
+        command: [
+            "dbus-send", 
+            "--system", 
+            "--print-reply=literal",
+            "--dest=org.freedesktop.login1", 
+            "/org/freedesktop/login1",
+            "org.freedesktop.DBus.Properties.Get",
+            "string:org.freedesktop.login1.Manager", 
+            "string:LidClosed"
+        ]
+        stdout: SplitParser {
+            onRead: line => root.setLidClosed(line.indexOf("true") !== -1)
+        }
+    }
+
+    // systemd --user: unit state changes (session bus)
+    Process {
+        id: unitMonitor
+        property string pending: ""
+        command: [
+            "dbus-monitor", "--session",
+            "type='signal'," + 
+            "interface='org.freedesktop.DBus.Properties'," + 
+            "path='/org/freedesktop/systemd1/unit/lidguard_2eservice'"
+        ]
+        stdout: SplitParser {
+            onRead: line => {
+                if (line.indexOf('string "ActiveState"') !== -1) {
+                    unitMonitor.pending = "ActiveState"
+                    return
+                }
+                if (unitMonitor.pending === "ActiveState") {
+                    unitMonitor.pending = ""
+                    const m = line.match(/string "(.*)"/)
+                    if (m) {
+                        console.info("[lidguard] unit signal:", m[1])
+                        root.setUnitActive(m[1] === "active")
+                    }
+                }
+            }
+        }
+        Component.onCompleted: running = true
+        onExited: running = true // auto restart
+    }
+
+    // systemd-logind: kernel lid events (system bus)
+    Process {
+        id: lidMonitor
+        property string pending: ""
+        command: [
+            "dbus-monitor", "--system",
+            "type='signal',sender='org.freedesktop.login1'," + 
+            "interface='org.freedesktop.DBus.Properties'," +
+            "path='/org/freedesktop/login1'"
+        ]
+        stdout: SplitParser {
+            onRead: line => {
+                if (line.indexOf('string "LidClosed"') !== -1) {
+                    lidMonitor.pending = "LidClosed"
+                    return
+                }
+                if (lidMonitor.pending === "LidClosed") {
+                    lidMonitor.pending = ""
+                    const m = line.match(/boolean (\w+)/)
+                    if (m) {
+                        console.info("[lidguard] lid signal:", line.trim())
+                        root.setLidClosed(m[1] === "true")
+                    }
+                }
+            }
+        }
+        Component.onCompleted: running = true
+        onExited: running = true // auto restart
     }
 }
